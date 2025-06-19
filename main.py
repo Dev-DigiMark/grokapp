@@ -30,28 +30,9 @@ class GrokClient:
 
 grok = GrokClient()
 
-# === Prompt Template ===
-PROMPT_TEMPLATE = """
-You are an expert legal funding analyst. Evaluate the following personal injury funding deal and return a detailed report including a summary, risk factors, eligibility check, risk score (0-100), funding recommendation (amount and reason), and final conclusion.
-
-Use the rules below to guide your judgment:
-- If the injured party is the first name on the ticket, they are likely at-fault and should be declined.
-- Consider file availability: TAR, photos, ID, police report.
-- If the case is from Arizona and TAR/police report is missing, do NOT auto-decline.
-- If the applicant has a criminal record and litigation is involved, the witness may be disqualified, increasing the risk.
-
-Here is the deal data:
-{deal_data}
-
-Return a structured report with these sections:
-1. Deal Summary
-2. Rule Evaluation
-3. Risk Score Breakdown
-4. Funding Cap Recommendation
-5. Final Decision and Justification
-6. Final Decision, either we need to fund or not
-7. Why that final decision was made
-"""
+def load_prompt_template():
+    with open("prompt.txt", "r") as f:
+        return f.read()
 
 # === Read Users ===
 def load_users():
@@ -79,7 +60,7 @@ def login_screen(users):
 
 # === Grok Logic ===
 def generate_report_with_grok(deal_data):
-    prompt = PROMPT_TEMPLATE.format(deal_data=deal_data)
+    prompt = load_prompt_template().format(deal_data=deal_data)
     response = grok.chat_completion(
         model="grok-1-chat",
         messages=[{"role": "user", "content": prompt}],
