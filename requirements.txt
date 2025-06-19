@@ -3,3 +3,4 @@ pandas==2.2.2
 fpdf2
 markdown2
 openai
+python-dotenv
