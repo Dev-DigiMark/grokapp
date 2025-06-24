@@ -47,7 +47,7 @@ def load_users():
 
 # === Authentication ===
 def login_screen(users):
-    st.title("🔐 Login to Access the Report Generator")
+    st.title("🔐 Login to Access the Report Generator 🔐")
     username = st.text_input("Username")
     password = st.text_input("Password", type="password")
 
