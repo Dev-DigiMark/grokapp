@@ -11,21 +11,30 @@ Use the deal information and rules below to form a precise evaluation. Your repo
     - Applicant's role in the incident
     - State or jurisdiction
     - Key documents available or missing
+
 2. Rule-Based Evaluation
    Evaluate the deal based on the following rules:
     - If the injured party is listed first on the police ticket, they are likely at fault and the deal should be declined.
     - Check for availability of the following documents: TAR (Traffic Accident Report), photos, ID, police report.
     - If the case is from Arizona and lacks TAR or police report, do not auto-decline.
     - If the applicant has a criminal record and litigation is involved, they may be disqualified as a witness, which increases the overall risk.
+
 3. Risk Score Breakdown (0 to 100)
     - Assign a numerical risk score from 0 (no risk) to 100 (high risk).
     - Justify the score based on contributing risk factors.
+
 4. Funding Cap Recommendation
     - Recommend a maximum funding amount.
     - Include a brief justification based on the risk profile, document availability, and case strength.
+
 5. Final Decision
     - Clearly state whether the deal should be funded or declined.
     - Include a concise justification for the decision.
+
+6. Recommendation
+    - Clearly state your recommendation for the deal should be funded or declined.
+    - How Much? Include how much should be funded.
+    
 6. Rationale for Final Decision
     - Provide a detailed explanation of why the final decision was made.
     - Address relevant risk factors, rule violations (if any), and judgment based on available information.
