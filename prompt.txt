@@ -8,13 +8,13 @@ Use the deal information and rules below to form a precise evaluation. Your repo
 1. Deal Summary
 - Provide a brief overview of the case, including:
     - Type of injury
-    - Applicant’s role in the incident
+    - Applicant's role in the incident
     - State or jurisdiction
     - Key documents available or missing
 2. Rule-Based Evaluation
    Evaluate the deal based on the following rules:
     - If the injured party is listed first on the police ticket, they are likely at fault and the deal should be declined.
-    - Check for availability of the following documents: TAR (Treatment Authorization Request), photos, ID, police report.
+    - Check for availability of the following documents: TAR (Traffic Accident Report), photos, ID, police report.
     - If the case is from Arizona and lacks TAR or police report, do not auto-decline.
     - If the applicant has a criminal record and litigation is involved, they may be disqualified as a witness, which increases the overall risk.
 3. Risk Score Breakdown (0 to 100)
@@ -29,4 +29,3 @@ Use the deal information and rules below to form a precise evaluation. Your repo
 6. Rationale for Final Decision
     - Provide a detailed explanation of why the final decision was made.
     - Address relevant risk factors, rule violations (if any), and judgment based on available information.
-

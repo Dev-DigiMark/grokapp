@@ -7,6 +7,7 @@ from openai import OpenAI
 from dotenv import load_dotenv
 from fpdf.enums import XPos, YPos
 import re
+import base64
 
 load_dotenv()
 
@@ -61,11 +62,17 @@ def login_screen(users):
 # === Grok Logic ===
 def generate_report_with_grok(deal_data):
     prompt = load_prompt_template().format(deal_data=deal_data)
+    # If there are uploaded files, append a summary to the prompt
+    uploaded_reports = deal_data.get("uploaded_reports", [])
+    if uploaded_reports:
+        prompt += "\n\nAttached files for this lead:\n"
+        for f in uploaded_reports:
+            prompt += f"- {f['name']} (type: {f['type']})\n"
     response = grok.chat_completion(
         model="grok-1-chat",
         messages=[{"role": "user", "content": prompt}],
         temperature=0.3,
-        max_tokens=1200
+        max_tokens=10000
     )
     return response
 
@@ -143,7 +150,7 @@ def parse_markdown_line(pdf, line):
 def create_pdf(person_name, report):
     pdf = PDF()
     pdf.set_font('DejaVu', 'B', 16)
-    pdf.cell(0, 10, f'Legal Funding Analysis Report - {person_name}', new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='C')
+    pdf.cell(0, 10, 'Case ID – Decision', new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='C')
     pdf.ln(10)
     lines = report.split("\n")
     for line in lines:
@@ -158,24 +165,51 @@ def main_app():
     uploaded_file = st.file_uploader("Upload CSV File", type=["csv"])
     
     if uploaded_file:
+        # Extract deal id from the uploaded file name
+        deal_id = uploaded_file.name.split("-")[0]
         df = pd.read_csv(uploaded_file)
         st.success(f"Uploaded {len(df)} records.")
+        if "uploaded_files" not in st.session_state:
+            st.session_state.uploaded_files = {}
+        if "report_buffers" not in st.session_state:
+            st.session_state.report_buffers = {}
         for idx, row in df.iterrows():
-            person_name = f"{row.get('first_name', 'Unknown')}_{row.get('last_name', 'Unknown')}"
+            # Use deal_id as the person_name for file naming
+            person_name = deal_id
             deal_data = row.to_dict()
-            st.write(f"Generating report for **{person_name}**...")
-            try:
-                report = generate_report_with_grok(deal_data)
-                pdf_buffer = create_pdf(person_name, report)
+            st.write(f"---\n### Lead: **{person_name}**")
+            file_key = f"files_{idx}"
+            uploaded_files = st.file_uploader(
+                f"Upload Police/Accident Reports for {person_name} (PDF/JPG)",
+                type=["pdf", "jpg", "jpeg"],
+                key=file_key,
+                accept_multiple_files=True
+            )
+            # Store in session
+            if uploaded_files:
+                st.session_state.uploaded_files[person_name] = uploaded_files
+                file_info_list = []
+                deal_data["uploaded_reports"] = file_info_list
+            else:
+                deal_data["uploaded_reports"] = []
+            # Generate Report Button
+            if st.button(f"Generate Report for {person_name}", key=f"gen_{idx}"):
+                try:
+                    report = generate_report_with_grok(deal_data)
+                    pdf_buffer = create_pdf(person_name, report)
+                    st.session_state.report_buffers[person_name] = pdf_buffer
+                    st.success("Report generated!")
+                except Exception as e:
+                    st.error(f"Error processing {person_name}: {str(e)}")
+                    st.exception(e)
+            # Show download button if report is generated
+            if person_name in st.session_state.get("report_buffers", {}):
                 st.download_button(
                     label=f"Download Report for {person_name}",
-                    data=pdf_buffer,
+                    data=st.session_state.report_buffers[person_name],
                     file_name=f"{person_name}.pdf",
                     mime="application/pdf"
                 )
-            except Exception as e:
-                st.error(f"Error processing {person_name}: {str(e)}")
-                st.exception(e)
 
 # === App Entry Point ===
 def main():
