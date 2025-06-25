@@ -8,6 +8,9 @@ from dotenv import load_dotenv
 from fpdf.enums import XPos, YPos
 import re
 import base64
+from PIL import Image
+import pytesseract
+from PyPDF2 import PdfReader
 
 load_dotenv()
 
@@ -98,9 +101,11 @@ def generate_report_with_grok(deal_data):
     # If there are uploaded files, append a summary to the prompt
     uploaded_reports = deal_data.get("uploaded_reports", [])
     if uploaded_reports:
-        prompt += "\n\nAttached files for this lead:\n"
+        prompt += "\n\nAttached files for this lead (with extracted summaries):\n"
         for f in uploaded_reports:
             prompt += f"- {f['name']} (type: {f['type']})\n"
+            if f.get('summary'):
+                prompt += f"  Extracted summary: {f['summary']}\n"
     response = grok.chat_completion(
         model="grok-1-chat",
         messages=[{"role": "user", "content": prompt}],
@@ -229,9 +234,29 @@ def main_app():
                 st.session_state.uploaded_files[person_name] = uploaded_files
                 file_info_list = []
                 for f in uploaded_files:
+                    file_summary = ""
+                    # Extract text summary from PDF
+                    if f.type == "application/pdf":
+                        try:
+                            pdf_reader = PdfReader(f)
+                            text = ""
+                            for page in pdf_reader.pages:
+                                text += page.extract_text() or ""
+                            file_summary = text.strip().replace("\n", " ")[:500]
+                        except Exception as e:
+                            file_summary = f"[Could not extract PDF text: {str(e)}]"
+                    # Extract text summary from images
+                    elif f.type in ["image/jpeg", "image/jpg", "image/png", "image/JPEG", "image/JPG", "image/PNG"]:
+                        try:
+                            image = Image.open(f)
+                            text = pytesseract.image_to_string(image)
+                            file_summary = text.strip().replace("\n", " ")[:500]
+                        except Exception as e:
+                            file_summary = f"[Could not extract image text: {str(e)}]"
                     file_info_list.append({
                         "name": f.name,
-                        "type": f.type
+                        "type": f.type,
+                        "summary": file_summary
                     })
                 deal_data["uploaded_reports"] = file_info_list
             else:

@@ -4,3 +4,6 @@ fpdf2
 markdown2
 openai
 python-dotenv
+PyPDF2
+pytesseract
+Pillow
