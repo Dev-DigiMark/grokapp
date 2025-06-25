@@ -35,6 +35,10 @@ def load_prompt_template():
     with open("prompt.txt", "r") as f:
         return f.read()
 
+def save_prompt_template(content):
+    with open("prompt.txt", "w") as f:
+        f.write(content)
+
 # === Read Users ===
 def load_users():
     users = {}
@@ -47,7 +51,7 @@ def load_users():
 
 # === Authentication ===
 def login_screen(users):
-    st.title("🔐 Login to Access the Report Generator 🔐")
+    st.title("🔐 Login to Access the Report Generator")
     username = st.text_input("Username")
     password = st.text_input("Password", type="password")
 
@@ -55,9 +59,38 @@ def login_screen(users):
         if username in users and users[username] == password:
             st.session_state.authenticated = True
             st.session_state.username = username
+            st.session_state.is_admin = (username == "admin")  # Set admin status
             st.rerun()
         else:
             st.error("Invalid username or password.")
+
+# === Admin Screen ===
+def admin_screen():
+    st.title("👨‍💼 Admin Dashboard - Prompt Template Editor")
+    
+    # Load current prompt template
+    current_prompt = load_prompt_template()
+    
+    # Create a text area for editing
+    edited_prompt = st.text_area(
+        "Edit Prompt Template",
+        value=current_prompt,
+        height=500,
+        key="prompt_editor"
+    )
+    
+    # Save button
+    if st.button("Save Changes"):
+        try:
+            save_prompt_template(edited_prompt)
+            st.success("Prompt template updated successfully!")
+        except Exception as e:
+            st.error(f"Error saving prompt template: {str(e)}")
+    
+    # Add a button to switch to main app
+    if st.button("Switch to Report Generator"):
+        st.session_state.show_admin = False
+        st.rerun()
 
 # === Grok Logic ===
 def generate_report_with_grok(deal_data):
@@ -161,6 +194,12 @@ def create_pdf(person_name, report):
 
 # === Main App ===
 def main_app():
+    # Add a button for admin to switch to admin screen
+    if st.session_state.get("is_admin", False):
+        if st.sidebar.button("Switch to Admin Dashboard"):
+            st.session_state.show_admin = True
+            st.rerun()
+    
     st.title("📑 Legal Funding Risk Report Generator (Grok)")
     uploaded_file = st.file_uploader("Upload CSV File", type=["csv"])
     
@@ -216,11 +255,16 @@ def main():
     users = load_users()
     if "authenticated" not in st.session_state:
         st.session_state.authenticated = False
+    if "show_admin" not in st.session_state:
+        st.session_state.show_admin = False
 
     if not st.session_state.authenticated:
         login_screen(users)
     else:
-        main_app()
+        if st.session_state.get("is_admin", False) and st.session_state.show_admin:
+            admin_screen()
+        else:
+            main_app()
 
 if __name__ == "__main__":
     main()
