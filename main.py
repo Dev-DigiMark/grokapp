@@ -228,6 +228,11 @@ def main_app():
             if uploaded_files:
                 st.session_state.uploaded_files[person_name] = uploaded_files
                 file_info_list = []
+                for f in uploaded_files:
+                    file_info_list.append({
+                        "name": f.name,
+                        "type": f.type
+                    })
                 deal_data["uploaded_reports"] = file_info_list
             else:
                 deal_data["uploaded_reports"] = []
