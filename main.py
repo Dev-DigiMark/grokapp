@@ -219,8 +219,8 @@ def main_app():
             st.write(f"---\n### Lead: **{person_name}**")
             file_key = f"files_{idx}"
             uploaded_files = st.file_uploader(
-                f"Upload Police/Accident Reports for {person_name} (PDF/JPG)",
-                type=["pdf", "jpg", "jpeg"],
+                f"Upload Police/Accident Reports for {person_name} (PDF/JPG/PNG)",
+                type=["pdf", "jpg", "jpeg", "png", "JPEG", "JPG", "PNG"],
                 key=file_key,
                 accept_multiple_files=True
             )
