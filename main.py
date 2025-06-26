@@ -11,6 +11,7 @@ import base64
 from PIL import Image
 import pytesseract
 from PyPDF2 import PdfReader
+import shutil
 
 load_dotenv()
 
@@ -199,6 +200,8 @@ def create_pdf(person_name, report):
 
 # === Main App ===
 def main_app():
+    if "uploader_reset" not in st.session_state:
+        st.session_state["uploader_reset"] = 0
     # Add a button for admin to switch to admin screen
     if st.session_state.get("is_admin", False):
         if st.sidebar.button("Switch to Admin Dashboard"):
@@ -206,7 +209,11 @@ def main_app():
             st.rerun()
     
     st.title("📑 Legal Funding Risk Report Generator (Grok)")
-    uploaded_file = st.file_uploader("Upload CSV File", type=["csv"])
+    uploaded_file = st.file_uploader(
+        "Upload CSV File",
+        type=["csv"],
+        key=f"csv_uploader_{st.session_state['uploader_reset']}"
+    )
     
     if uploaded_file:
         # Extract deal id from the uploaded file name
@@ -222,7 +229,7 @@ def main_app():
             person_name = deal_id
             deal_data = row.to_dict()
             st.write(f"---\n### Lead: **{person_name}**")
-            file_key = f"files_{idx}"
+            file_key = f"files_{idx}_{st.session_state['uploader_reset']}"
             uploaded_files = st.file_uploader(
                 f"Upload Police/Accident Reports for {person_name} (PDF/JPG/PNG)",
                 type=["pdf", "jpg", "jpeg", "png", "JPEG", "JPG", "PNG"],
@@ -264,6 +271,7 @@ def main_app():
             # Generate Report Button
             if st.button(f"Generate Report for {person_name}", key=f"gen_{idx}"):
                 try:
+                    st.write("Generating report...")
                     report = generate_report_with_grok(deal_data)
                     pdf_buffer = create_pdf(person_name, report)
                     st.session_state.report_buffers[person_name] = pdf_buffer
@@ -279,6 +287,16 @@ def main_app():
                     file_name=f"{person_name}.pdf",
                     mime="application/pdf"
                 )
+                # Add a reload button
+                if st.button(f"Reload Screen for {person_name}", key=f"reload_{idx}"):
+                    # Clear all session state except authentication and admin info
+                    keys_to_keep = {"authenticated", "username", "is_admin", "show_admin"}
+                    keys_to_delete = [k for k in st.session_state.keys() if k not in keys_to_keep]
+                    for k in keys_to_delete:
+                        del st.session_state[k]
+                    # Increment uploader_reset to force file_uploader widgets to reset
+                    st.session_state["uploader_reset"] = st.session_state.get("uploader_reset", 0) + 1
+                    st.rerun()
 
 # === App Entry Point ===
 def main():
