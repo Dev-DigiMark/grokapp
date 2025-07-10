@@ -203,21 +203,58 @@ OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")  # Make sure to set this in yo
 openai_client = openai.OpenAI(api_key=OPENAI_API_KEY)
 
 # === OpenAI Image Processing ===
-def extract_text_with_openai_vision(image_file):
-    """Use OpenAI's Vision API to extract text from images"""
+def process_image_with_openai_classification_and_action(image_file):
     try:
-        # Read and encode the image
+        # Read and encode
         image_bytes = image_file.read()
         base64_image = base64.b64encode(image_bytes).decode('utf-8')
         
-        # Prepare the prompt for OpenAI
-        response = openai_client.chat.completions.create(
+        # Ask GPT to classify the image
+        classify_response = openai_client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
                 {
                     "role": "user",
                     "content": [
-                        {"type": "text", "text": "Extract all text from this document image exactly as it appears. Include all numbers, dates, and personal information. Return only the extracted text, nothing else."},
+                        {"type": "text", "text": 
+                            "Look at this image and tell me clearly what type of image this is. "
+                            "Is it a document, ID card, form, receipt, or is it a photo of a scene, accident, street, or something else? "
+                            "Give a short label like 'Driver License', 'Accident Scene', 'Receipt', etc."
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/jpeg;base64,{base64_image}"
+                            }
+                        }
+                    ]
+                }
+            ],
+            max_tokens=100
+        )
+        
+        image_type = classify_response.choices[0].message.content.strip()
+        
+        # Now decide how to process based on type
+        if any(keyword in image_type.lower() for keyword in ["license", "id", "document", "form", "card"]):
+            prompt_text = (
+                "Extract all text exactly as it appears from this image, including names, numbers, dates, and personal info. "
+                "Return only the text."
+            )
+        else:
+            prompt_text = (
+                "Describe in detail what is visible in this image. "
+                "Focus on objects, people, vehicles, and the situation."
+            )
+        
+        # Final processing
+        final_response = openai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt_text},
                         {
                             "type": "image_url",
                             "image_url": {
@@ -230,11 +267,27 @@ def extract_text_with_openai_vision(image_file):
             max_tokens=2000
         )
         
-        # Return the extracted text
-        return response.choices[0].message.content.strip()
-    
+        content = final_response.choices[0].message.content.strip()
+        
+        # If OpenAI refuses, fallback to Tesseract OCR
+        if (
+            any(keyword in image_type.lower() for keyword in ["license", "id", "document", "form", "card"])
+            and ("can't assist" in content.lower() or "cannot assist" in content.lower())
+        ):
+            # Use Tesseract OCR
+            import io
+            from PIL import Image
+            image_file.seek(0)  # Reset file pointer
+            image = Image.open(io.BytesIO(image_file.read()))
+            ocr_text = pytesseract.image_to_string(image)
+            content = ocr_text.strip()
+
+        return content
+        
+
     except Exception as e:
-        return f"[OpenAI OCR Error: {str(e)}]"
+        return {"type": "Error", "content": f"[OpenAI Vision Error: {str(e)}]"}
+
     
 # === Main App ===
 def main_app():
@@ -294,8 +347,7 @@ def main_app():
                     elif f.type.lower() in ["image/jpeg", "image/jpg", "image/png"]:
                         try:
                             # Use OpenAI for image text extraction
-                            file_summary = extract_text_with_openai_vision(f)
-                            print(file_summary)
+                            file_summary = process_image_with_openai_classification_and_action(f)
                         except Exception as e:
                             file_summary = f"[Image Extraction Error: {str(e)}]"
                     
