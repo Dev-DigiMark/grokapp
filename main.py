@@ -1,17 +1,17 @@
-import streamlit as st
+import pytesseract
+import os, re, cv2
+import base64
+import openai 
+import numpy as np
 import pandas as pd
+from PIL import Image
 from fpdf import FPDF
-import os
+import streamlit as st
 from io import BytesIO
 from openai import OpenAI
+from PyPDF2 import PdfReader
 from dotenv import load_dotenv
 from fpdf.enums import XPos, YPos
-import re
-import base64
-from PIL import Image
-import pytesseract
-from PyPDF2 import PdfReader
-import shutil
 
 load_dotenv()
 
@@ -108,7 +108,7 @@ def generate_report_with_grok(deal_data):
             if f.get('summary'):
                 prompt += f"  Extracted summary: {f['summary']}\n"
     response = grok.chat_completion(
-        model="grok-1-chat",
+        model="grok-3",  # Updated to grok-3 for consistency
         messages=[{"role": "user", "content": prompt}],
         temperature=0.3,
         max_tokens=10000
@@ -198,6 +198,44 @@ def create_pdf(person_name, report):
             parse_markdown_line(pdf, safe_line)
     return BytesIO(pdf.output(dest='S'))
 
+
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")  # Make sure to set this in your .env file
+openai_client = openai.OpenAI(api_key=OPENAI_API_KEY)
+
+# === OpenAI Image Processing ===
+def extract_text_with_openai_vision(image_file):
+    """Use OpenAI's Vision API to extract text from images"""
+    try:
+        # Read and encode the image
+        image_bytes = image_file.read()
+        base64_image = base64.b64encode(image_bytes).decode('utf-8')
+        
+        # Prepare the prompt for OpenAI
+        response = openai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "Extract all text from this document image exactly as it appears. Include all numbers, dates, and personal information. Return only the extracted text, nothing else."},
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/jpeg;base64,{base64_image}"
+                            }
+                        }
+                    ]
+                }
+            ],
+            max_tokens=2000
+        )
+        
+        # Return the extracted text
+        return response.choices[0].message.content.strip()
+    
+    except Exception as e:
+        return f"[OpenAI OCR Error: {str(e)}]"
+    
 # === Main App ===
 def main_app():
     if "uploader_reset" not in st.session_state:
@@ -249,17 +287,18 @@ def main_app():
                             text = ""
                             for page in pdf_reader.pages:
                                 text += page.extract_text() or ""
-                            file_summary = text.strip().replace("\n", " ")[:500]
+                            file_summary = clean_text(text.strip().replace("\n", " ")[:500])
                         except Exception as e:
                             file_summary = f"[Could not extract PDF text: {str(e)}]"
-                    # Extract text summary from images
-                    elif f.type in ["image/jpeg", "image/jpg", "image/png", "image/JPEG", "image/JPG", "image/PNG"]:
+                    # Extract text summary from images with enhanced preprocessing
+                    elif f.type.lower() in ["image/jpeg", "image/jpg", "image/png"]:
                         try:
-                            image = Image.open(f)
-                            text = pytesseract.image_to_string(image)
-                            file_summary = text.strip().replace("\n", " ")[:500]
+                            # Use OpenAI for image text extraction
+                            file_summary = extract_text_with_openai_vision(f)
+                            print(file_summary)
                         except Exception as e:
-                            file_summary = f"[Could not extract image text: {str(e)}]"
+                            file_summary = f"[Image Extraction Error: {str(e)}]"
+                    
                     file_info_list.append({
                         "name": f.name,
                         "type": f.type,
