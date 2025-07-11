@@ -1,10 +1,9 @@
 import pytesseract
-import os, re, cv2
+import os, re
 import base64
 import openai 
 import numpy as np
 import pandas as pd
-from PIL import Image
 from fpdf import FPDF
 import streamlit as st
 from io import BytesIO
@@ -12,11 +11,11 @@ from openai import OpenAI
 from PyPDF2 import PdfReader
 from dotenv import load_dotenv
 from fpdf.enums import XPos, YPos
-import pinecone
+from pinecone import Pinecone, ServerlessSpec
 from sentence_transformers import SentenceTransformer
 import uuid
 from typing import List, Dict, Any
-import json
+
 
 load_dotenv()
 
@@ -34,17 +33,23 @@ client = OpenAI(
 def initialize_pinecone():
     """Initialize Pinecone client and index"""
     try:
-        pinecone.init(api_key=PINECONE_API_KEY, environment=PINECONE_ENVIRONMENT)
-        
+        pc = Pinecone(api_key=os.environ.get("PINECONE_API_KEY"))
+        index_name = os.environ.get("PINECONE_INDEX_NAME", "legal-documents")
+        dimension = 384  # or 1536 if using OpenAI embeddings
+
         # Create index if it doesn't exist
-        if PINECONE_INDEX_NAME not in pinecone.list_indexes():
-            pinecone.create_index(
-                name=PINECONE_INDEX_NAME,
-                dimension=384,  # Dimension for sentence-transformers/all-MiniLM-L6-v2
-                metric="cosine"
+        if index_name not in pc.list_indexes().names():
+            pc.create_index(
+                name=index_name,
+                dimension=dimension,
+                metric='cosine',
+                spec=ServerlessSpec(
+                    cloud='aws',  # or 'gcp'
+                    region='us-west-2'  # or your region
+                )
             )
-        
-        return pinecone.Index(PINECONE_INDEX_NAME)
+
+        return pc.Index(index_name)
     except Exception as e:
         st.error(f"Pinecone initialization error: {str(e)}")
         return None

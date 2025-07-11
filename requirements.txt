@@ -7,8 +7,5 @@ python-dotenv
 PyPDF2
 pytesseract
 Pillow
-opencv-python
-pinecone-client
+pinecone
 sentence-transformers
-langchain
-langchain-openai
