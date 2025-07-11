@@ -12,15 +12,196 @@ from openai import OpenAI
 from PyPDF2 import PdfReader
 from dotenv import load_dotenv
 from fpdf.enums import XPos, YPos
+import pinecone
+from sentence_transformers import SentenceTransformer
+import uuid
+from typing import List, Dict, Any
+import json
 
 load_dotenv()
 
 XAI_API_KEY = os.environ.get("GROK_API_KEY")
+PINECONE_API_KEY = os.environ.get("PINECONE_API_KEY")
+PINECONE_ENVIRONMENT = os.environ.get("PINECONE_ENVIRONMENT", "gcp-starter")
+PINECONE_INDEX_NAME = os.environ.get("PINECONE_INDEX_NAME", "legal-documents")
 
 client = OpenAI(
     api_key=XAI_API_KEY,
     base_url="https://api.x.ai/v1",
 )
+
+# === Pinecone Setup ===
+def initialize_pinecone():
+    """Initialize Pinecone client and index"""
+    try:
+        pinecone.init(api_key=PINECONE_API_KEY, environment=PINECONE_ENVIRONMENT)
+        
+        # Create index if it doesn't exist
+        if PINECONE_INDEX_NAME not in pinecone.list_indexes():
+            pinecone.create_index(
+                name=PINECONE_INDEX_NAME,
+                dimension=384,  # Dimension for sentence-transformers/all-MiniLM-L6-v2
+                metric="cosine"
+            )
+        
+        return pinecone.Index(PINECONE_INDEX_NAME)
+    except Exception as e:
+        st.error(f"Pinecone initialization error: {str(e)}")
+        return None
+
+# === Document Processing for RAG ===
+def chunk_text(text: str, chunk_size: int = 500, overlap: int = 50) -> List[str]:
+    """Split text into overlapping chunks"""
+    chunks = []
+    words = text.split()
+    
+    for i in range(0, len(words), chunk_size - overlap):
+        chunk = " ".join(words[i:i + chunk_size])
+        if chunk.strip():
+            chunks.append(chunk.strip())
+    
+    return chunks
+
+def process_document_for_rag(file_obj, file_name: str, deal_id: str) -> List[Dict[str, Any]]:
+    """Process document and create chunks for vector storage"""
+    chunks = []
+    
+    try:
+        if file_obj.type == "application/pdf":
+            # Process PDF
+            pdf_reader = PdfReader(file_obj)
+            text = ""
+            for page in pdf_reader.pages:
+                text += page.extract_text() or ""
+            
+        elif file_obj.type.lower() in ["image/jpeg", "image/jpg", "image/png"]:
+            # Process image using OpenAI Vision
+            text = process_image_with_openai_classification_and_action(file_obj)
+            if isinstance(text, dict):
+                text = text.get("content", str(text))
+        
+        else:
+            return chunks
+        
+        # Clean and chunk the text
+        cleaned_text = clean_text(text.strip())
+        text_chunks = chunk_text(cleaned_text)
+        
+        # Create chunk documents
+        for i, chunk in enumerate(text_chunks):
+            chunk_id = f"{deal_id}_{file_name}_{i}_{uuid.uuid4().hex[:8]}"
+            chunks.append({
+                "id": chunk_id,
+                "text": chunk,
+                "metadata": {
+                    "deal_id": deal_id,
+                    "file_name": file_name,
+                    "file_type": file_obj.type,
+                    "chunk_index": i,
+                    "total_chunks": len(text_chunks)
+                }
+            })
+        
+    except Exception as e:
+        st.error(f"Error processing document {file_name}: {str(e)}")
+    
+    return chunks
+
+# === Vector Database Operations ===
+def store_documents_in_pinecone(chunks: List[Dict[str, Any]], index) -> bool:
+    """Store document chunks in Pinecone"""
+    try:
+        # Initialize sentence transformer
+        model = SentenceTransformer('all-MiniLM-L6-v2')
+        
+        # Prepare vectors for Pinecone
+        vectors = []
+        for chunk in chunks:
+            # Generate embedding
+            embedding = model.encode(chunk["text"]).tolist()
+            
+            vectors.append({
+                "id": chunk["id"],
+                "values": embedding,
+                "metadata": chunk["metadata"]
+            })
+        
+        # Upsert to Pinecone
+        index.upsert(vectors=vectors)
+        return True
+        
+    except Exception as e:
+        st.error(f"Error storing documents in Pinecone: {str(e)}")
+        return False
+
+def retrieve_relevant_chunks(query: str, deal_id: str, index, top_k: int = 5) -> List[str]:
+    """Retrieve relevant document chunks for a query"""
+    try:
+        # Initialize sentence transformer
+        model = SentenceTransformer('all-MiniLM-L6-v2')
+        
+        # Generate query embedding
+        query_embedding = model.encode(query).tolist()
+        
+        # Query Pinecone
+        results = index.query(
+            vector=query_embedding,
+            filter={"deal_id": deal_id},
+            top_k=top_k,
+            include_metadata=True
+        )
+        
+        # Extract relevant chunks
+        relevant_chunks = []
+        for match in results.matches:
+            if match.metadata and "text" in match.metadata:
+                relevant_chunks.append(match.metadata["text"])
+        
+        return relevant_chunks
+        
+    except Exception as e:
+        st.error(f"Error retrieving chunks from Pinecone: {str(e)}")
+        return []
+
+# === Enhanced Grok Logic with RAG ===
+def generate_report_with_grok_rag(deal_data, index):
+    """Generate report using Grok with RAG-enhanced context"""
+    
+    # Create base prompt
+    base_prompt = load_prompt_template().format(deal_data=deal_data)
+    
+    # Get relevant chunks from vector database
+    query = f"legal funding risk assessment for {deal_data.get('deal_id', 'lead')}"
+    relevant_chunks = retrieve_relevant_chunks(query, deal_data.get('deal_id', ''), index)
+    
+    # Build enhanced prompt with RAG context
+    enhanced_prompt = base_prompt
+    
+    if relevant_chunks:
+        enhanced_prompt += "\n\n=== RELEVANT DOCUMENT CONTEXT ===\n"
+        for i, chunk in enumerate(relevant_chunks, 1):
+            enhanced_prompt += f"Document Chunk {i}: {chunk}\n\n"
+        enhanced_prompt += "=== END DOCUMENT CONTEXT ===\n\n"
+        enhanced_prompt += "Please use the above document context to enhance your analysis and provide more detailed insights in the report."
+    
+    # Add uploaded files summary
+    uploaded_reports = deal_data.get("uploaded_reports", [])
+    if uploaded_reports:
+        enhanced_prompt += "\n\nAttached files for this lead (with extracted summaries):\n"
+        for f in uploaded_reports:
+            enhanced_prompt += f"- {f['name']} (type: {f['type']})\n"
+            if f.get('summary'):
+                enhanced_prompt += f"  Extracted summary: {f['summary']}\n"
+    
+    # Generate response with Grok
+    response = grok.chat_completion(
+        model="grok-3",
+        messages=[{"role": "user", "content": enhanced_prompt}],
+        temperature=0.3,
+        max_tokens=10000
+    )
+    
+    return response
 
 # === GrokClient ===
 class GrokClient:
@@ -327,10 +508,14 @@ def main_app():
                 key=file_key,
                 accept_multiple_files=True
             )
-            # Store in session
+            # Store in session and process for RAG
             if uploaded_files:
                 st.session_state.uploaded_files[person_name] = uploaded_files
                 file_info_list = []
+                
+                # Initialize Pinecone for RAG
+                pinecone_index = initialize_pinecone()
+                
                 for f in uploaded_files:
                     file_summary = ""
                     # Extract text summary from PDF
@@ -341,13 +526,30 @@ def main_app():
                             for page in pdf_reader.pages:
                                 text += page.extract_text() or ""
                             file_summary = clean_text(text.strip().replace("\n", " ")[:500])
+                            
+                            # Process for RAG if Pinecone is available
+                            if pinecone_index:
+                                chunks = process_document_for_rag(f, f.name, person_name)
+                                if chunks:
+                                    store_documents_in_pinecone(chunks, pinecone_index)
+                                    st.success(f"✅ Stored {len(chunks)} chunks from {f.name} in vector database")
+                                    
                         except Exception as e:
                             file_summary = f"[Could not extract PDF text: {str(e)}]"
+                            
                     # Extract text summary from images with enhanced preprocessing
                     elif f.type.lower() in ["image/jpeg", "image/jpg", "image/png"]:
                         try:
                             # Use OpenAI for image text extraction
                             file_summary = process_image_with_openai_classification_and_action(f)
+                            
+                            # Process for RAG if Pinecone is available
+                            if pinecone_index:
+                                chunks = process_document_for_rag(f, f.name, person_name)
+                                if chunks:
+                                    store_documents_in_pinecone(chunks, pinecone_index)
+                                    st.success(f"✅ Stored {len(chunks)} chunks from {f.name} in vector database")
+                                    
                         except Exception as e:
                             file_summary = f"[Image Extraction Error: {str(e)}]"
                     
@@ -363,7 +565,12 @@ def main_app():
             if st.button(f"Generate Report for {person_name}", key=f"gen_{idx}"):
                 try:
                     st.write("Generating report...")
-                    report = generate_report_with_grok(deal_data)
+                    # Initialize Pinecone index
+                    pinecone_index = initialize_pinecone()
+                    if pinecone_index:
+                        report = generate_report_with_grok_rag(deal_data, pinecone_index)
+                    else:
+                        report = generate_report_with_grok(deal_data) # Fallback to original if Pinecone fails
                     pdf_buffer = create_pdf(person_name, report)
                     st.session_state.report_buffers[person_name] = pdf_buffer
                     st.success("Report generated!")
