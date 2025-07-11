@@ -8,3 +8,7 @@ PyPDF2
 pytesseract
 Pillow
 opencv-python
+pinecone-client
+sentence-transformers
+langchain
+langchain-openai
