@@ -1,8 +1,7 @@
-import pytesseract
 import os, re
 import base64
 import openai 
-import numpy as np
+import pytesseract
 import pandas as pd
 from fpdf import FPDF
 import streamlit as st
@@ -15,7 +14,6 @@ from pinecone import Pinecone, ServerlessSpec
 from sentence_transformers import SentenceTransformer
 import uuid
 from typing import List, Dict, Any
-
 
 load_dotenv()
 
