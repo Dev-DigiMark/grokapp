@@ -7,3 +7,5 @@ python-dotenv
 PyPDF2
 pytesseract
 Pillow
+pinecone
+sentence-transformers
