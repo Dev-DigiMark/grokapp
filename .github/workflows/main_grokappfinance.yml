@@ -35,7 +35,7 @@ jobs:
       # Optional: Add step to run tests here (PyTest, Django test suites, etc.)
 
       - name: Zip artifact for deployment
-        run: zip -r release.zip . -x \"*.git*\" \"*.venv*\" \"*.github*\" \"*.DS_Store\"
+        run: zip release.zip ./* -r
 
       - name: Upload artifact for deployment jobs
         uses: actions/upload-artifact@v4
@@ -48,7 +48,6 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     needs: build
-    
     permissions:
       id-token: write #This is required for requesting the JWT
       contents: read #This is required for actions/checkout
@@ -66,9 +65,9 @@ jobs:
       - name: Login to Azure
         uses: azure/login@v2
         with:
-          client-id: ${{ secrets.AZUREAPPSERVICE_CLIENTID_EA14031AEDE7423FB1F299B50078A51B }}
-          tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_A6211F98EB1F409DB8BC11E070184441 }}
-          subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_EF3D8B4618FA46BCAD9254C8C0E9A77F }}
+          client-id: ${{ secrets.AZUREAPPSERVICE_CLIENTID_2812B6EDF0FF403FBE1A5D9A9DF95DA8 }}
+          tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_99A2D44C2012407BA2E166FB6A64EC42 }}
+          subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_CB52EACAEEB1440D80A0D332C082F579 }}
 
       - name: 'Deploy to Azure Web App'
         uses: azure/webapps-deploy@v3
