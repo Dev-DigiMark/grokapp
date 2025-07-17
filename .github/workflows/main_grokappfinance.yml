@@ -36,7 +36,7 @@ jobs:
 
       - name: Zip artifact for deployment
         run: |
-          zip -r release.zip . -x "*.git*" "*.venv*" "*.github*" "*.DS_Store"
+          zip -r release.zip . -x "venv/*"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -74,4 +74,5 @@ jobs:
         with:
           app-name: 'grokappfinance'
           slot-name: 'Production'
+          package: release.zip
           publish-profile: ${{ secrets.AZUREAPPSERVICE_PUBLISHPROFILE }} # Add this secret
