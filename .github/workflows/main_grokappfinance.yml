@@ -57,9 +57,12 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: python-app
+          path: .
 
-      - name: Unzip artifact
-        run: unzip release.zip
+      - name: Check if zip file exists and valid
+        run: |
+          file release.zip
+          unzip -l release.zip || echo "Zip is invalid"
 
       
       - name: Login to Azure
