@@ -79,4 +79,3 @@ jobs:
           app-name: 'grokappfinance'
           slot-name: 'Production'
           package: release.zip
-          
