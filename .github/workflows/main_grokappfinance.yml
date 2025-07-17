@@ -1,4 +1,7 @@
-# Updated workflow file
+# Docs for the Azure Web Apps Deploy action: https://github.com/Azure/webapps-deploy
+# More GitHub Actions for Azure: https://github.com/Azure/actions
+# More info on Python, GitHub Actions, and Azure App Service: https://aka.ms/python-webapps-actions
+
 name: Build and deploy Python app to Azure Web App - grokappfinance
 
 on:
@@ -11,71 +14,67 @@ jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: read #This is required for actions/checkout
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python 3.10
+      - name: Set up Python version
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
-      - name: Install dependencies
+      - name: Create and start virtual environment
         run: |
           python -m venv venv
           source venv/bin/activate
-          pip install --upgrade pip
-          pip install -r requirements.txt
-          
-      # Add this diagnostic step
-      - name: Check installed packages
-        run: |
-          source venv/bin/activate
-          pip freeze
+      
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+        
+      # Optional: Add step to run tests here (PyTest, Django test suites, etc.)
 
       - name: Zip artifact for deployment
-        run: |
-          zip -r release.zip . -x "venv/*"
+        run: zip release.zip ./* -r
 
-      - name: Upload artifact
+      - name: Upload artifact for deployment jobs
         uses: actions/upload-artifact@v4
         with:
           name: python-app
-          path: release.zip
-
+          path: |
+            release.zip
+            !venv/
   deploy:
     runs-on: ubuntu-latest
     needs: build
     
     permissions:
-      id-token: write
-      contents: read
+      id-token: write #This is required for requesting the JWT
+      contents: read #This is required for actions/checkout
 
     steps:
-      - name: Download artifact
+      - name: Download artifact from build job
         uses: actions/download-artifact@v4
         with:
           name: python-app
           path: .
 
-      - name: Check if zip file exists and valid
-        run: |
-          file release.zip
-          unzip -l release.zip || echo "Zip is invalid"
+      - name: Unzip artifact for deployment
+        run: unzip release.zip
 
       
       - name: Login to Azure
         uses: azure/login@v2
         with:
-          client-id: ${{ secrets.AZUREAPPSERVICE_CLIENTID_2812B6EDF0FF403FBE1A5D9A9DF95DA8 }}
-          tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_99A2D44C2012407BA2E166FB6A64EC42 }}
-          subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_CB52EACAEEB1440D80A0D332C082F579 }}
+          client-id: ${{ secrets.AZUREAPPSERVICE_CLIENTID_EA14031AEDE7423FB1F299B50078A51B }}
+          tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_A6211F98EB1F409DB8BC11E070184441 }}
+          subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_EF3D8B4618FA46BCAD9254C8C0E9A77F }}
 
       - name: 'Deploy to Azure Web App'
         uses: azure/webapps-deploy@v3
+        id: deploy-to-webapp
         with:
           app-name: 'grokappfinance'
           slot-name: 'Production'
           package: release.zip
-          publish-profile: ${{ secrets.AZUREAPPSERVICE_PUBLISHPROFILE }} # Add this secret
+          publish-profile: ${{ secrets.AZUREAPPSERVICE_PUBLISHPROFILE }}
