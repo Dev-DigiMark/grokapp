@@ -1,8 +1,8 @@
 # Docs for the Azure Web Apps Deploy action: https://github.com/Azure/webapps-deploy
-# More GitHub Actions for Azure: https://github.com/Azure/actions
+# More GitHub Actions for Azure: https://www.azure.com/actions
 # More info on Python, GitHub Actions, and Azure App Service: https://aka.ms/python-webapps-actions
 
-name: Build and deploy Python app to Azure Web App - grokappfinance
+name: Build n Deploy App
 
 on:
   push:
@@ -24,26 +24,22 @@ jobs:
         with:
           python-version: '3.10.18'
 
-      - name: Create and start virtual environment
-        run: |
-          python -m venv venv
-          source venv/bin/activate
-      
-      - name: Install dependencies
-        run: pip install -r requirements.txt
-        
+      # IMPORTANT: Removed virtual environment creation and dependency installation.
+      # Azure App Service will handle 'pip install -r requirements.txt' during deployment.
+
       # Optional: Add step to run tests here (PyTest, Django test suites, etc.)
+      # If your tests require dependencies, you would set up a separate venv ONLY for testing
+      # within this step, ensuring it's not packaged for deployment.
 
       - name: Zip artifact for deployment
-        run: zip release.zip ./* -r
+        # This will now only zip your application code, requirements.txt, etc., NOT installed dependencies or the venv.
+        run: zip release.zip ./* -r -x "venv/*" -x ".git/*" -x "__pycache__/*" -x ".github/*" # Exclude venv, .git, __pycache__, and the workflow file directory itself
 
       - name: Upload artifact for deployment jobs
         uses: actions/upload-artifact@v4
         with:
           name: python-app
-          path: |
-            release.zip
-            !venv/
+          path: release.zip # Only upload the single zip file
 
   deploy:
     runs-on: ubuntu-latest
@@ -61,7 +57,6 @@ jobs:
       - name: Unzip artifact for deployment
         run: unzip release.zip
 
-      
       - name: Login to Azure
         uses: azure/login@v2
         with:
@@ -70,8 +65,9 @@ jobs:
           subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_976E893F1B0E4D619B76C4448D5C4CE0 }}
 
       - name: Delay before deploy
+        # This delay might not be necessary with the smaller package, but can be kept if desired.
         run: sleep 60
-        
+
       - name: 'Deploy to Azure Web App'
         uses: azure/webapps-deploy@v3
         id: deploy-to-webapp
