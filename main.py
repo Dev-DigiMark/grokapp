@@ -115,7 +115,7 @@ def store_documents_in_pinecone(chunks: List[Dict[str, Any]], index) -> bool:
     """Store document chunks in Pinecone"""
     try:
         # Initialize sentence transformer
-        model = SentenceTransformer('all-MiniLM-L6-v2')
+        model = SentenceTransformer('all-MiniLM-L6-v2', device='cpu')
         
         # Prepare vectors for Pinecone
         vectors = []
