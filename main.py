@@ -134,7 +134,7 @@ def store_documents_in_pinecone(chunks: List[Dict[str, Any]], index) -> bool:
         return True
         
     except Exception as e:
-        st.error(f"Error storing documents in Pinecone: {str(e)}")
+        # st.error(f"Error storing documents in Pinecone: {str(e)}")
         return False
 
 def retrieve_relevant_chunks(query: str, deal_id: str, index, top_k: int = 5) -> List[str]:
