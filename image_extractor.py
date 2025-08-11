@@ -2,7 +2,6 @@ import numpy as np
 import io
 import pytesseract
 from ultralytics import YOLO
-import pyzbar.pyzbar as pyzbar
 from PIL import Image, ExifTags
 
 # Try to import OpenCV with fallback
@@ -12,6 +11,14 @@ try:
 except ImportError as e:
     print(f"Warning: OpenCV not available: {e}")
     CV2_AVAILABLE = False
+
+# Try to import pyzbar with fallback
+try:
+    import pyzbar.pyzbar as pyzbar
+    PYZBAR_AVAILABLE = True
+except ImportError as e:
+    print(f"Warning: pyzbar not available: {e}")
+    PYZBAR_AVAILABLE = False
 
 def extract_image_info(image_input, detect_objects=False):
     """
@@ -62,12 +69,16 @@ def extract_image_info(image_input, detect_objects=False):
                 except Exception:
                     info["text"] = ""
                     
-                # Barcode detection
-                try:
-                    barcodes = pyzbar.decode(img_cv)
-                    info["barcodes"] = [{"type": b.type, "data": b.data.decode('utf-8')} for b in barcodes]
-                except Exception:
+                # Barcode detection (only if pyzbar is available)
+                if PYZBAR_AVAILABLE:
+                    try:
+                        barcodes = pyzbar.decode(img_cv)
+                        info["barcodes"] = [{"type": b.type, "data": b.data.decode('utf-8')} for b in barcodes]
+                    except Exception:
+                        info["barcodes"] = []
+                else:
                     info["barcodes"] = []
+                    info["warning"] = "pyzbar not available - barcode detection disabled"
                     
                 # Face detection
                 try:
