@@ -1,19 +1,17 @@
-import os, re
-import base64
-import openai 
-import pytesseract
+"""Import Required Packages"""
+import os, re, uuid
 import pandas as pd
 from fpdf import FPDF
-import streamlit as st
 from io import BytesIO
+import streamlit as st
 from openai import OpenAI
 from PyPDF2 import PdfReader
 from dotenv import load_dotenv
 from fpdf.enums import XPos, YPos
-from pinecone import Pinecone, ServerlessSpec
-from sentence_transformers import SentenceTransformer
-import uuid
 from typing import List, Dict, Any
+from pinecone import Pinecone, ServerlessSpec
+from image_extractor import extract_image_info
+from sentence_transformers import SentenceTransformer
 
 load_dotenv()
 
@@ -35,15 +33,14 @@ def initialize_pinecone():
         index_name = os.environ.get("PINECONE_INDEX_NAME", "legal-documents")
         dimension = 384  # or 1536 if using OpenAI embeddings
 
-        # Create index if it doesn't exist
         if index_name not in pc.list_indexes().names():
             pc.create_index(
                 name=index_name,
                 dimension=dimension,
                 metric='cosine',
                 spec=ServerlessSpec(
-                    cloud='aws',  # or 'gcp'
-                    region='us-west-2'  # or your region
+                    cloud='aws',
+                    region='us-west-2'
                 )
             )
 
@@ -65,45 +62,94 @@ def chunk_text(text: str, chunk_size: int = 500, overlap: int = 50) -> List[str]
     
     return chunks
 
+def parse_aamva_barcode(data):
+    """Parse AAMVA barcode data from driver's licenses"""
+    fields = {}
+    lines = data.split('\n')
+    for line in lines:
+        if line.startswith('DAA'):
+            fields['name'] = line[3:].strip()
+        elif line.startswith('DAG'):
+            fields['address'] = line[3:].strip()
+        elif line.startswith('DBB'):
+            fields['dob'] = line[3:].strip()
+    return fields
+
 def process_document_for_rag(file_obj, file_name: str, deal_id: str) -> List[Dict[str, Any]]:
     """Process document and create chunks for vector storage"""
     chunks = []
     
     try:
         if file_obj.type == "application/pdf":
-            # Process PDF
             pdf_reader = PdfReader(file_obj)
             text = ""
             for page in pdf_reader.pages:
                 text += page.extract_text() or ""
-            
+            cleaned_text = clean_text(text.strip())
+            text_chunks = chunk_text(cleaned_text)
+            for i, chunk in enumerate(text_chunks):
+                chunk_id = f"{deal_id}_{file_name}_{i}_{uuid.uuid4().hex[:8]}"
+                chunks.append({
+                    "id": chunk_id,
+                    "text": chunk,
+                    "metadata": {
+                        "deal_id": deal_id,
+                        "file_name": file_name,
+                        "file_type": file_obj.type,
+                        "chunk_index": i,
+                        "total_chunks": len(text_chunks)
+                    }
+                })
+                
         elif file_obj.type.lower() in ["image/jpeg", "image/jpg", "image/png"]:
-            # Process image using OpenAI Vision
-            text = process_image_with_openai_classification_and_action(file_obj)
-            if isinstance(text, dict):
-                text = text.get("content", str(text))
-        
-        else:
-            return chunks
-        
-        # Clean and chunk the text
-        cleaned_text = clean_text(text.strip())
-        text_chunks = chunk_text(cleaned_text)
-        
-        # Create chunk documents
-        for i, chunk in enumerate(text_chunks):
-            chunk_id = f"{deal_id}_{file_name}_{i}_{uuid.uuid4().hex[:8]}"
-            chunks.append({
-                "id": chunk_id,
-                "text": chunk,
-                "metadata": {
-                    "deal_id": deal_id,
-                    "file_name": file_name,
-                    "file_type": file_obj.type,
-                    "chunk_index": i,
-                    "total_chunks": len(text_chunks)
-                }
-            })
+            info = extract_image_info(file_obj, detect_objects=True)
+            ocr_text = info.get("text", "")
+            barcodes = info.get("barcodes", [])
+            objects = info.get("objects", [])
+            
+            if barcodes:
+                for barcode in barcodes:
+                    if barcode['type'] == 'PDF417':
+                        parsed_data = parse_aamva_barcode(barcode['data'])
+                        if parsed_data:
+                            summary = "Driver's License Information:\n"
+                            for key, value in parsed_data.items():
+                                summary += f"{key.capitalize()}: {value}\n"
+                            text_for_rag = summary
+                            break
+                else:
+                    text_for_rag = ocr_text if ocr_text else "No text detected."
+                    summary = text_for_rag[:500]
+            else:
+                if ocr_text:
+                    text_for_rag = ocr_text
+                    summary = ocr_text[:500]
+                else:
+                    if objects:
+                        object_names = [obj["class"] for obj in objects]
+                        text_for_rag = "Detected objects: " + ", ".join(object_names) + "."
+                        summary = text_for_rag
+                    else:
+                        text_for_rag = "No text or objects detected."
+                        summary = text_for_rag
+            
+            cleaned_text = clean_text(text_for_rag.strip())
+            text_chunks = chunk_text(cleaned_text)
+            for i, chunk in enumerate(text_chunks):
+                chunk_id = f"{deal_id}_{file_name}_{i}_{uuid.uuid4().hex[:8]}"
+                chunks.append({
+                    "id": chunk_id,
+                    "text": chunk,
+                    "metadata": {
+                        "deal_id": deal_id,
+                        "file_name": file_name,
+                        "file_type": file_obj.type,
+                        "chunk_index": i,
+                        "total_chunks": len(text_chunks)
+                    }
+                })
+            global file_summary
+            file_summary = summary
         
     except Exception as e:
         st.error(f"Error processing document {file_name}: {str(e)}")
@@ -114,80 +160,54 @@ def process_document_for_rag(file_obj, file_name: str, deal_id: str) -> List[Dic
 def store_documents_in_pinecone(chunks: List[Dict[str, Any]], index) -> bool:
     """Store document chunks in Pinecone"""
     try:
-        # Initialize sentence transformer
         model = SentenceTransformer('all-MiniLM-L6-v2', device='cpu')
-        
-        # Prepare vectors for Pinecone
         vectors = []
         for chunk in chunks:
-            # Generate embedding
             embedding = model.encode(chunk["text"]).tolist()
-            
             vectors.append({
                 "id": chunk["id"],
                 "values": embedding,
                 "metadata": chunk["metadata"]
             })
-        
-        # Upsert to Pinecone
         index.upsert(vectors=vectors)
         return True
-        
     except Exception as e:
-        # st.error(f"Error storing documents in Pinecone: {str(e)}")
         return False
 
 def retrieve_relevant_chunks(query: str, deal_id: str, index, top_k: int = 5) -> List[str]:
     """Retrieve relevant document chunks for a query"""
     try:
-        # Initialize sentence transformer
         model = SentenceTransformer('all-MiniLM-L6-v2')
-        
-        # Generate query embedding
         query_embedding = model.encode(query).tolist()
-        
-        # Query Pinecone
         results = index.query(
             vector=query_embedding,
             filter={"deal_id": deal_id},
             top_k=top_k,
             include_metadata=True
         )
-        
-        # Extract relevant chunks
         relevant_chunks = []
         for match in results.matches:
             if match.metadata and "text" in match.metadata:
                 relevant_chunks.append(match.metadata["text"])
-        
         return relevant_chunks
-        
     except Exception as e:
-        st.error(f"Error retrieving chunks from Pinecone: {str(e)}")
         return []
 
 # === Enhanced Grok Logic with RAG ===
 def generate_report_with_grok_rag(deal_data, index):
     """Generate report using Grok with RAG-enhanced context"""
-    
-    # Create base prompt
     base_prompt = load_prompt_template().format(deal_data=deal_data)
-    
-    # Get relevant chunks from vector database
     query = f"legal funding risk assessment for {deal_data.get('deal_id', 'lead')}"
     relevant_chunks = retrieve_relevant_chunks(query, deal_data.get('deal_id', ''), index)
     
-    # Build enhanced prompt with RAG context
     enhanced_prompt = base_prompt
-    
     if relevant_chunks:
         enhanced_prompt += "\n\n=== RELEVANT DOCUMENT CONTEXT ===\n"
         for i, chunk in enumerate(relevant_chunks, 1):
             enhanced_prompt += f"Document Chunk {i}: {chunk}\n\n"
         enhanced_prompt += "=== END DOCUMENT CONTEXT ===\n\n"
-        enhanced_prompt += "Please use the above document context to enhance your analysis and provide more detailed insights in the report."
+        enhanced_prompt += "Please use the above document context to enhance your analysis."
     
-    # Add uploaded files summary
     uploaded_reports = deal_data.get("uploaded_reports", [])
     if uploaded_reports:
         enhanced_prompt += "\n\nAttached files for this lead (with extracted summaries):\n"
@@ -196,14 +216,12 @@ def generate_report_with_grok_rag(deal_data, index):
             if f.get('summary'):
                 enhanced_prompt += f"  Extracted summary: {f['summary']}\n"
     
-    # Generate response with Grok
     response = grok.chat_completion(
         model="grok-3",
         messages=[{"role": "user", "content": enhanced_prompt}],
         temperature=0.3,
         max_tokens=10000
     )
-    
     return response
 
 # === GrokClient ===
@@ -242,12 +260,11 @@ def login_screen(users):
     st.title("🔐 Login to Access the Report Generator")
     username = st.text_input("Username")
     password = st.text_input("Password", type="password")
-
     if st.button("Login"):
         if username in users and users[username] == password:
             st.session_state.authenticated = True
             st.session_state.username = username
-            st.session_state.is_admin = (username == "admin")  # Set admin status
+            st.session_state.is_admin = (username == "admin")
             st.rerun()
         else:
             st.error("Invalid username or password.")
@@ -255,27 +272,19 @@ def login_screen(users):
 # === Admin Screen ===
 def admin_screen():
     st.title("👨‍💼 Admin Dashboard - Prompt Template Editor")
-    
-    # Load current prompt template
     current_prompt = load_prompt_template()
-    
-    # Create a text area for editing
     edited_prompt = st.text_area(
         "Edit Prompt Template",
         value=current_prompt,
         height=500,
         key="prompt_editor"
     )
-    
-    # Save button
     if st.button("Save Changes"):
         try:
             save_prompt_template(edited_prompt)
             st.success("Prompt template updated successfully!")
         except Exception as e:
             st.error(f"Error saving prompt template: {str(e)}")
-    
-    # Add a button to switch to main app
     if st.button("Switch to Report Generator"):
         st.session_state.show_admin = False
         st.rerun()
@@ -283,7 +292,6 @@ def admin_screen():
 # === Grok Logic ===
 def generate_report_with_grok(deal_data):
     prompt = load_prompt_template().format(deal_data=deal_data)
-    # If there are uploaded files, append a summary to the prompt
     uploaded_reports = deal_data.get("uploaded_reports", [])
     if uploaded_reports:
         prompt += "\n\nAttached files for this lead (with extracted summaries):\n"
@@ -292,7 +300,7 @@ def generate_report_with_grok(deal_data):
             if f.get('summary'):
                 prompt += f"  Extracted summary: {f['summary']}\n"
     response = grok.chat_completion(
-        model="grok-3",  # Updated to grok-3 for consistency
+        model="grok-3",
         messages=[{"role": "user", "content": prompt}],
         temperature=0.3,
         max_tokens=10000
@@ -317,13 +325,11 @@ class PDF(FPDF):
         self.add_font('DejaVu', 'B', 'DejaVuSans-Bold.ttf')
         self.set_font('DejaVu', '', 12)
 
-# Utility to replace non-ASCII characters with '-'
 def safe_ascii(text):
     return ''.join(c if ord(c) < 128 else '-' for c in text)
 
 def parse_markdown_line(pdf, line):
     line = safe_ascii(line)
-    # HEADERS
     if line.startswith("### "):
         pdf.set_font('DejaVu', 'B', 12)
         pdf.set_x(pdf.l_margin)
@@ -339,18 +345,15 @@ def parse_markdown_line(pdf, line):
         pdf.set_x(pdf.l_margin)
         pdf.multi_cell(0, 10, line[2:])
         pdf.ln(4)
-    # BULLETS
     elif line.strip().startswith("- "):
         pdf.set_font('DejaVu', '', 12)
         bullet_text = line.strip()[2:].strip()
         try:
             pdf.set_x(pdf.l_margin)
             pdf.multi_cell(0, 8, f"- {bullet_text}")
-        except Exception as e:
-            print(f"Error with line: {repr(bullet_text)}")
+        except Exception:
             pdf.set_x(pdf.l_margin)
             pdf.multi_cell(0, 8, f"- [UNRENDERABLE]")
-    # BOLD TEXT
     elif "**" in line:
         pdf.set_font('DejaVu', '', 12)
         parts = re.split(r'(\*\*.*?\*\*)', line)
@@ -382,102 +385,10 @@ def create_pdf(person_name, report):
             parse_markdown_line(pdf, safe_line)
     return BytesIO(pdf.output(dest='S'))
 
-
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")  # Make sure to set this in your .env file
-openai_client = openai.OpenAI(api_key=OPENAI_API_KEY)
-
-# === OpenAI Image Processing ===
-def process_image_with_openai_classification_and_action(image_file):
-    try:
-        # Read and encode
-        image_bytes = image_file.read()
-        base64_image = base64.b64encode(image_bytes).decode('utf-8')
-        
-        # Ask GPT to classify the image
-        classify_response = openai_client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": 
-                            "Look at this image and tell me clearly what type of image this is. "
-                            "Is it a document, ID card, form, receipt, or is it a photo of a scene, accident, street, or something else? "
-                            "Give a short label like 'Driver License', 'Accident Scene', 'Receipt', etc."
-                        },
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/jpeg;base64,{base64_image}"
-                            }
-                        }
-                    ]
-                }
-            ],
-            max_tokens=100
-        )
-        
-        image_type = classify_response.choices[0].message.content.strip()
-        
-        # Now decide how to process based on type
-        if any(keyword in image_type.lower() for keyword in ["license", "id", "document", "form", "card"]):
-            prompt_text = (
-                "Extract all text exactly as it appears from this image, including names, numbers, dates, and personal info. "
-                "Return only the text."
-            )
-        else:
-            prompt_text = (
-                "Describe in detail what is visible in this image. "
-                "Focus on objects, people, vehicles, and the situation."
-            )
-        
-        # Final processing
-        final_response = openai_client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": prompt_text},
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/jpeg;base64,{base64_image}"
-                            }
-                        }
-                    ]
-                }
-            ],
-            max_tokens=2000
-        )
-        
-        content = final_response.choices[0].message.content.strip()
-        
-        # If OpenAI refuses, fallback to Tesseract OCR
-        if (
-            any(keyword in image_type.lower() for keyword in ["license", "id", "document", "form", "card"])
-            and ("can't assist" in content.lower() or "cannot assist" in content.lower())
-        ):
-            # Use Tesseract OCR
-            import io
-            from PIL import Image
-            image_file.seek(0)  # Reset file pointer
-            image = Image.open(io.BytesIO(image_file.read()))
-            ocr_text = pytesseract.image_to_string(image)
-            content = ocr_text.strip()
-
-        return content
-        
-
-    except Exception as e:
-        return {"type": "Error", "content": f"[OpenAI Vision Error: {str(e)}]"}
-
-    
 # === Main App ===
 def main_app():
     if "uploader_reset" not in st.session_state:
         st.session_state["uploader_reset"] = 0
-    # Add a button for admin to switch to admin screen
     if st.session_state.get("is_admin", False):
         if st.sidebar.button("Switch to Admin Dashboard"):
             st.session_state.show_admin = True
@@ -491,7 +402,6 @@ def main_app():
     )
     
     if uploaded_file:
-        # Extract deal id from the uploaded file name
         deal_id = uploaded_file.name.split("-")[0]
         df = pd.read_csv(uploaded_file)
         st.success(f"Uploaded {len(df)} records.")
@@ -500,7 +410,6 @@ def main_app():
         if "report_buffers" not in st.session_state:
             st.session_state.report_buffers = {}
         for idx, row in df.iterrows():
-            # Use deal_id as the person_name for file naming
             person_name = deal_id
             deal_data = row.to_dict()
             st.write(f"---\n### Lead: **{person_name}**")
@@ -511,17 +420,13 @@ def main_app():
                 key=file_key,
                 accept_multiple_files=True
             )
-            # Store in session and process for RAG
             if uploaded_files:
                 st.session_state.uploaded_files[person_name] = uploaded_files
                 file_info_list = []
-                
-                # Initialize Pinecone for RAG
                 pinecone_index = initialize_pinecone()
                 
                 for f in uploaded_files:
                     file_summary = ""
-                    # Extract text summary from PDF
                     if f.type == "application/pdf":
                         try:
                             pdf_reader = PdfReader(f)
@@ -529,30 +434,21 @@ def main_app():
                             for page in pdf_reader.pages:
                                 text += page.extract_text() or ""
                             file_summary = clean_text(text.strip().replace("\n", " ")[:500])
-                            
-                            # Process for RAG if Pinecone is available
                             if pinecone_index:
                                 chunks = process_document_for_rag(f, f.name, person_name)
                                 if chunks:
                                     store_documents_in_pinecone(chunks, pinecone_index)
                                     st.success(f"✅ Stored {len(chunks)} chunks from {f.name} in vector database")
-                                    
                         except Exception as e:
                             file_summary = f"[Could not extract PDF text: {str(e)}]"
-                            
-                    # Extract text summary from images with enhanced preprocessing
                     elif f.type.lower() in ["image/jpeg", "image/jpg", "image/png"]:
                         try:
-                            # Use OpenAI for image text extraction
-                            file_summary = process_image_with_openai_classification_and_action(f)
-                            
-                            # Process for RAG if Pinecone is available
                             if pinecone_index:
                                 chunks = process_document_for_rag(f, f.name, person_name)
                                 if chunks:
                                     store_documents_in_pinecone(chunks, pinecone_index)
                                     st.success(f"✅ Stored {len(chunks)} chunks from {f.name} in vector database")
-                                    
+                            file_summary = globals().get('file_summary', "No summary available")
                         except Exception as e:
                             file_summary = f"[Image Extraction Error: {str(e)}]"
                     
@@ -564,23 +460,19 @@ def main_app():
                 deal_data["uploaded_reports"] = file_info_list
             else:
                 deal_data["uploaded_reports"] = []
-            # Generate Report Button
             if st.button(f"Generate Report for {person_name}", key=f"gen_{idx}"):
                 try:
                     st.write("Generating report...")
-                    # Initialize Pinecone index
                     pinecone_index = initialize_pinecone()
                     if pinecone_index:
                         report = generate_report_with_grok_rag(deal_data, pinecone_index)
                     else:
-                        report = generate_report_with_grok(deal_data) # Fallback to original if Pinecone fails
+                        report = generate_report_with_grok(deal_data)
                     pdf_buffer = create_pdf(person_name, report)
                     st.session_state.report_buffers[person_name] = pdf_buffer
                     st.success("Report generated!")
                 except Exception as e:
                     st.error(f"Error processing {person_name}: {str(e)}")
-                    st.exception(e)
-            # Show download button if report is generated
             if person_name in st.session_state.get("report_buffers", {}):
                 st.download_button(
                     label=f"Download Report for {person_name}",
@@ -588,14 +480,11 @@ def main_app():
                     file_name=f"{person_name}.pdf",
                     mime="application/pdf"
                 )
-                # Add a reload button
                 if st.button(f"Reload Screen for {person_name}", key=f"reload_{idx}"):
-                    # Clear all session state except authentication and admin info
                     keys_to_keep = {"authenticated", "username", "is_admin", "show_admin"}
                     keys_to_delete = [k for k in st.session_state.keys() if k not in keys_to_keep]
                     for k in keys_to_delete:
                         del st.session_state[k]
-                    # Increment uploader_reset to force file_uploader widgets to reset
                     st.session_state["uploader_reset"] = st.session_state.get("uploader_reset", 0) + 1
                     st.rerun()
 

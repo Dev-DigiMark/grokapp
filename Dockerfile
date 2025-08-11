@@ -1,6 +1,14 @@
 # Use official Python image as base
 FROM python:3.11-slim
 
+# Install system dependencies required for OpenCV, Tesseract, and others
+RUN apt-get update && apt-get install -y \
+    libgl1 \
+    libglib2.0-0 \
+    tesseract-ocr \
+    libzbar0 \
+    && rm -rf /var/lib/apt/lists/*
+
 # Set working directory
 WORKDIR /app
 
@@ -13,11 +21,8 @@ COPY . .
 
 COPY .env .env
 
-# Expose port (adjust if your app uses a different port)
-EXPOSE 8000
-
-# Set environment variables (optional, can be overridden)
-# ENV VAR_NAME=value
+# Expose port
+EXPOSE 8501
 
 # Run the application
 CMD ["streamlit", "run", "main.py", "--server.port=8501"]
