@@ -1,30 +1,9 @@
 # Use official Python image as base
 FROM python:3.11-slim
 
-# Install system dependencies required for OpenCV, Tesseract, pyzbar, and others
+# Install system dependencies required for PIL, pytesseract, and basic image processing
 RUN apt-get update && apt-get install -y \
-    ffmpeg \
-    libsm6 \
-    libxext6 \
-    libgl1-mesa-glx \
-    libglib2.0-0 \
-    libxrender1 \
-    libgomp1 \
-    libgtk-3-0 \
-    libavcodec-dev \
-    libavformat-dev \
-    libswscale-dev \
-    libv4l-dev \
-    libxvidcore-dev \
-    libx264-dev \
-    libjpeg-dev \
-    libpng-dev \
-    libtiff-dev \
-    libatlas-base-dev \
-    gfortran \
     tesseract-ocr \
-    libzbar0 \
-    libzbar-dev \
     libtesseract5 \
     libtesseract-dev \
     && rm -rf /var/lib/apt/lists/*

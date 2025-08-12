@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 from fpdf.enums import XPos, YPos
 from typing import List, Dict, Any
 from pinecone import Pinecone, ServerlessSpec
-from image_extractor import extract_image_info
+from image_extractor2 import extract_image_info_lightweight, extract_text_only
 from sentence_transformers import SentenceTransformer
 
 load_dotenv()
@@ -102,7 +102,8 @@ def process_document_for_rag(file_obj, file_name: str, deal_id: str) -> List[Dic
                 })
                 
         elif file_obj.type.lower() in ["image/jpeg", "image/jpg", "image/png"]:
-            info = extract_image_info(file_obj, detect_objects=True)
+            # Use lightweight extractor for faster processing
+            info = extract_image_info_lightweight(file_obj, enhance_ocr=True)
             ocr_text = info.get("text", "")
             barcodes = info.get("barcodes", [])
             objects = info.get("objects", [])
@@ -215,6 +216,9 @@ def generate_report_with_grok_rag(deal_data, index):
             enhanced_prompt += f"- {f['name']} (type: {f['type']})\n"
             if f.get('summary'):
                 enhanced_prompt += f"  Extracted summary: {f['summary']}\n"
+            # Add full extracted text for images to include in the report
+            if f.get('type', '').lower() in ["image/jpeg", "image/jpg", "image/png"] and f.get('extracted_text'):
+                enhanced_prompt += f"  Full extracted text:\n{f['extracted_text']}\n"
     
     response = grok.chat_completion(
         model="grok-3",
@@ -299,6 +303,9 @@ def generate_report_with_grok(deal_data):
             prompt += f"- {f['name']} (type: {f['type']})\n"
             if f.get('summary'):
                 prompt += f"  Extracted summary: {f['summary']}\n"
+            # Add full extracted text for images to include in the report
+            if f.get('type', '').lower() in ["image/jpeg", "image/jpg", "image/png"] and f.get('extracted_text'):
+                prompt += f"  Full extracted text:\n{f['extracted_text']}\n"
     response = grok.chat_completion(
         model="grok-3",
         messages=[{"role": "user", "content": prompt}],
@@ -373,11 +380,38 @@ def parse_markdown_line(pdf, line):
         pdf.multi_cell(0, 8, line)
         pdf.ln(1)
 
-def create_pdf(person_name, report):
+def create_pdf(person_name, report, deal_data=None):
     pdf = PDF()
     pdf.set_font('DejaVu', 'B', 16)
     pdf.cell(0, 10, 'Case ID – Decision', new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='C')
     pdf.ln(10)
+    
+    # Add extracted text from images if available
+    if deal_data and deal_data.get("uploaded_reports"):
+        pdf.set_font('DejaVu', 'B', 14)
+        pdf.cell(0, 10, 'Extracted Text from Images:', new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='L')
+        pdf.ln(5)
+        
+        for report_file in deal_data["uploaded_reports"]:
+            if report_file.get("type", "").lower() in ["image/jpeg", "image/jpg", "image/png"] and report_file.get("extracted_text"):
+                pdf.set_font('DejaVu', 'B', 12)
+                pdf.cell(0, 8, f"File: {report_file['name']}", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='L')
+                pdf.ln(2)
+                pdf.set_font('DejaVu', '', 10)
+                # Split extracted text into lines and add to PDF
+                text_lines = report_file['extracted_text'].split('\n')
+                for text_line in text_lines[:20]:  # Limit to first 20 lines to avoid PDF overflow
+                    if text_line.strip():
+                        safe_line = text_line.encode('utf-8', 'replace').decode()
+                        pdf.multi_cell(0, 6, safe_line)
+                        pdf.ln(1)
+                pdf.ln(5)
+    
+    # Add the main report content
+    pdf.set_font('DejaVu', 'B', 14)
+    pdf.cell(0, 10, 'Risk Assessment Report:', new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='L')
+    pdf.ln(5)
+    
     lines = report.split("\n")
     for line in lines:
         if line.strip():
@@ -448,14 +482,22 @@ def main_app():
                                 if chunks:
                                     store_documents_in_pinecone(chunks, pinecone_index)
                                     st.success(f"✅ Stored {len(chunks)} chunks from {f.name} in vector database")
-                            file_summary = globals().get('file_summary', "No summary available")
+                            # Use lightweight extractor for faster processing
+                            info = extract_image_info_lightweight(f, enhance_ocr=True)
+                            file_summary = info.get("text", "")[:500] if info.get("text") else "No text detected"
+                            # Extract full text for inclusion in PDF report
+                            full_text = extract_text_only(f) if info.get("text") else "No text detected"
+                            
+                            
                         except Exception as e:
                             file_summary = f"[Image Extraction Error: {str(e)}]"
+                            full_text = f"[Image Extraction Error: {str(e)}]"
                     
                     file_info_list.append({
                         "name": f.name,
                         "type": f.type,
-                        "summary": file_summary
+                        "summary": file_summary,
+                        "extracted_text": full_text if f.type.lower() in ["image/jpeg", "image/jpg", "image/png"] else None
                     })
                 deal_data["uploaded_reports"] = file_info_list
             else:
@@ -468,7 +510,7 @@ def main_app():
                         report = generate_report_with_grok_rag(deal_data, pinecone_index)
                     else:
                         report = generate_report_with_grok(deal_data)
-                    pdf_buffer = create_pdf(person_name, report)
+                    pdf_buffer = create_pdf(person_name, report, deal_data)
                     st.session_state.report_buffers[person_name] = pdf_buffer
                     st.success("Report generated!")
                 except Exception as e:
