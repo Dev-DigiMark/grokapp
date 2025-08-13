@@ -6,18 +6,7 @@ ENV PYTHONUNBUFFERED=1 \
 WORKDIR /app
 
 # Install minimal system libs needed by opencv (and libGL)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates \
-    wget \
-    libgl1 \
-    libglib2.0-0 \
-    libsm6 \
-    libxext6 \
-    libxrender1 \
-    libgomp1 \
-    libjpeg62-turbo \
-    libpng16-16 \
-    && rm -rf /var/lib/apt/lists/*
+RUN apt-get update
 
 # Copy requirements and install Python deps
 COPY requirements.txt ./
