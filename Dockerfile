@@ -1,76 +1,37 @@
 FROM python:3.10-slim
 
-# Set environment variables
-ENV PYTHONUNBUFFERED=1
-ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONUNBUFFERED=1 \
+    DEBIAN_FRONTEND=noninteractive
 
-# Install system dependencies for OpenCV and computer vision
-RUN apt-get update && apt-get install -y \
+WORKDIR /app
+
+# Install minimal system libs needed by opencv (and libGL)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    wget \
+    libgl1 \
     libglib2.0-0 \
     libsm6 \
     libxext6 \
-    libxrender-dev \
+    libxrender1 \
     libgomp1 \
-    libgthread-2.0-0 \
-    libfontconfig1 \
-    libxss1 \
-    libnss3 \
-    libasound2 \
-    libxrandr2 \
-    libpangocairo-1.0-0 \
-    libatk1.0-0 \
-    libcairo-gobject2 \
-    libgtk-3-0 \
-    libgdk-pixbuf2.0-0 \
     libjpeg62-turbo \
     libpng16-16 \
-    libtiff5 \
-    libavcodec-extra \
-    libavformat58 \
-    libswscale5 \
-    libv4l-0 \
-    libxvidcore4 \
-    libx264-dev \
-    libgtk-3-dev \
-    libcanberra-gtk3-module \
-    libgstreamer1.0-0 \
-    libgstreamer-plugins-base1.0-0 \
-    libgstreamer-plugins-bad1.0-0 \
-    gstreamer1.0-plugins-base \
-    gstreamer1.0-plugins-good \
-    gstreamer1.0-plugins-bad \
-    gstreamer1.0-plugins-ugly \
-    gstreamer1.0-libav \
-    gstreamer1.0-tools \
-    gstreamer1.0-x \
-    gstreamer1.0-alsa \
-    gstreamer1.0-gl \
-    gstreamer1.0-gtk3 \
-    gstreamer1.0-qt5 \
-    gstreamer1.0-pulseaudio \
-    tesseract-ocr \
-    tesseract-ocr-eng \
-    libzbar0 \
-    && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Set working directory
-WORKDIR /app
+# Copy requirements and install Python deps
+COPY requirements.txt ./
 
-# Copy requirements first for better caching
-COPY requirements.txt .
+# IMPORTANT:
+# - Prefer opencv-python-headless in requirements.txt (see notes below).
+# - Pin torch to the appropriate CPU/CUDA build that you want.
+RUN pip install --upgrade pip setuptools wheel \
+    && pip install --no-cache-dir -r requirements.txt
 
-# Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application code
 COPY . .
 
-# Expose port
 EXPOSE 8501
 
-# Health check
-HEALTHCHECK CMD curl --fail http://localhost:8501/_stcore/health
 
-# Run the application
 CMD ["streamlit", "run", "main.py", "--server.port=8501", "--server.address=0.0.0.0"]
