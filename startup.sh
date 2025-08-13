@@ -1,17 +1,15 @@
-FROM python:3.10-slim
-
-# Set environment variables
-ENV PYTHONUNBUFFERED=1
-ENV DEBIAN_FRONTEND=noninteractive
+#!/bin/bash
 
 # Install system dependencies for OpenCV and computer vision
-RUN apt-get update && apt-get install -y \
+apt-get update
+apt-get install -y \
     libglib2.0-0 \
     libsm6 \
     libxext6 \
     libxrender-dev \
     libgomp1 \
     libgthread-2.0-0 \
+    libglib2.0-0 \
     libfontconfig1 \
     libxss1 \
     libnss3 \
@@ -47,30 +45,8 @@ RUN apt-get update && apt-get install -y \
     gstreamer1.0-gl \
     gstreamer1.0-gtk3 \
     gstreamer1.0-qt5 \
-    gstreamer1.0-pulseaudio \
-    tesseract-ocr \
-    tesseract-ocr-eng \
-    libzbar0 \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
+    gstreamer1.0-pulseaudio
 
-# Set working directory
-WORKDIR /app
-
-# Copy requirements first for better caching
-COPY requirements.txt .
-
-# Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Copy application code
-COPY . .
-
-# Expose port
-EXPOSE 8501
-
-# Health check
-HEALTHCHECK CMD curl --fail http://localhost:8501/_stcore/health
-
-# Run the application
-CMD ["streamlit", "run", "main.py", "--server.port=8501", "--server.address=0.0.0.0"]
+# Clean up
+apt-get clean
+rm -rf /var/lib/apt/lists/*

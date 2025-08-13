@@ -9,7 +9,6 @@ pytesseract
 Pillow
 pinecone==7.3.0
 sentence-transformers==5.0.0
-opencv-python
 opencv-python-headless==4.8.1.78
 ultralytics
 pyzbar
